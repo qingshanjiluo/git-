@@ -9,20 +9,14 @@ jobs:
   tunnel:
     runs-on: ubuntu-latest
     steps:
-      # 检出代码（如果服务需要）
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 启动你的本地服务（修改为你的实际服务）
       - name: Start local service
         run: |
-          # 示例：启动一个简单的 HTTP 服务器，监听 8000 端口
           python3 -m http.server 8000 &
-          # 等待服务启动
           sleep 2
-          echo "Local service running on port 8000"
 
-      # 安装 bore（使用预编译二进制，无需 Rust 环境）
       - name: Install bore
         run: |
           wget -q https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz
@@ -30,36 +24,35 @@ jobs:
           sudo mv bore /usr/local/bin/
           rm bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz
 
-      # 运行 bore 隧道并捕获公网地址
       - name: Expose via bore
         run: |
-          # 启动 bore，将输出重定向到文件以便解析 URL
+          # 启动 bore，将输出重定向到文件
           bore local 8000 --to bore.pub 2>&1 | tee bore.log &
           BORE_PID=$!
           sleep 5
-          # 从日志中提取公网地址（bore 输出形如 "listening at https://xxxx.bore.pub"）
-          URL=$(grep -oP 'https?://[a-z0-9]+\.bore\.pub' bore.log | head -1)
-          if [ -z "$URL" ]; then
-            echo "❌ Failed to get tunnel URL. bore.log content:"
+
+          # 从日志中提取端口（格式 "listening at bore.pub:XXXXX"）
+          PORT=$(grep -oP 'listening at bore\.pub:\K\d+' bore.log | head -1)
+          if [ -z "$PORT" ]; then
+            echo "❌ Failed to get tunnel port. bore.log content:"
             cat bore.log
             exit 1
           fi
-          echo "✅ Public URL: $URL"
-          echo "PUBLIC_URL=$URL" >> $GITHUB_ENV
-          echo "$URL" > public-url.txt   # 保存到文件，用于上传工件
 
-      # 将公网地址保存为工件（可在 Actions 页面下载）
+          PUBLIC_URL="http://bore.pub:$PORT"
+          echo "✅ Public URL: $PUBLIC_URL"
+          echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+          echo "$PUBLIC_URL" > public-url.txt
+
       - name: Upload public URL as artifact
         uses: actions/upload-artifact@v4
         with:
           name: bore-tunnel-url
           path: public-url.txt
-          retention-days: 1   # 保留1天，节省空间
+          retention-days: 1
 
-      # 保持工作流运行，让隧道持续（最大6小时）
       - name: Keep runner alive
         run: |
           echo "🔗 Service accessible at: ${{ env.PUBLIC_URL }}"
           echo "⏱️ This runner will stay alive for up to 6 hours."
-          echo "Press Ctrl+C to stop, or wait for timeout."
           sleep 6h
