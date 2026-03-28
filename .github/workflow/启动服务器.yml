@@ -1,0 +1,52 @@
+name: Expose Service via Cloudflare Tunnel
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 启动本地服务（示例：Python HTTP 服务器，监听 8000 端口）
+      - name: Start local service
+        run: |
+          python3 -m http.server 8000 &
+          sleep 2
+
+      # 安装 cloudflared
+      - name: Install cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+      # 启动临时隧道并获取公网地址
+      - name: Run tunnel
+        run: |
+          # 启动 cloudflared 隧道，将本地 8000 端口暴露
+          cloudflared tunnel --url http://localhost:8000 > cloudflared.log 2>&1 &
+          CLOUDFLARED_PID=$!
+          sleep 5
+
+          # 通过本地 API 获取公网地址（需要 jq）
+          sudo apt-get update && sudo apt-get install -y jq
+          TUNNEL_URL=$(curl -s http://localhost:8080/quicktunnel | jq -r '.url')
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "Failed to get tunnel URL, check cloudflared.log"
+            cat cloudflared.log
+            exit 1
+          fi
+
+          echo "Public URL: $TUNNEL_URL"
+          echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+
+      - name: Keep runner alive
+        run: |
+          echo "Service accessible at: ${{ env.TUNNEL_URL }}"
+          echo "This runner will stay alive for up to 6 hours."
+          sleep 6h
